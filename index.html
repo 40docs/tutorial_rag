@@ -1,0 +1,1209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RAG Glass Box Demo</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin:0; padding:0; background:#0f172a; color:#e2e8f0; overflow:hidden; height:100vh; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
+    #root { height:100vh; }
+    ::-webkit-scrollbar { width:6px; height:6px; }
+    ::-webkit-scrollbar-track { background:transparent; }
+    ::-webkit-scrollbar-thumb { background:#1e293b; border-radius:3px; }
+    ::-webkit-scrollbar-thumb:hover { background:#334155; }
+    @keyframes typingBounce { 0%,60%,100%{transform:translateY(0);opacity:.4} 30%{transform:translateY(-6px);opacity:1} }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.6;transform:scale(1.5)} }
+    @keyframes dotPulse { 0%,100%{r:5} 50%{r:8} }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+// ============================================================================
+// RAG Glass Box Demo — Single-File Application
+// ============================================================================
+const { useState, useCallback, useEffect, useRef, useMemo, createContext, useContext } = React;
+
+// ============================================================================
+// 1. CONSTANTS
+// ============================================================================
+const COLORS = {
+  host:     { bg:'#92400e', border:'#f59e0b', text:'#fbbf24', glow:'rgba(245,158,11,0.4)' },
+  docs:     { bg:'#064e3b', border:'#10b981', text:'#34d399', glow:'rgba(16,185,129,0.4)' },
+  vectordb: { bg:'#1e3a5f', border:'#3b82f6', text:'#60a5fa', glow:'rgba(59,130,246,0.4)' },
+  embedder: { bg:'#164e63', border:'#06b6d4', text:'#22d3ee', glow:'rgba(6,182,212,0.4)' },
+  llm:      { bg:'#581c87', border:'#a855f7', text:'#c084fc', glow:'rgba(168,85,247,0.4)' },
+  reranker: { bg:'#831843', border:'#ec4899', text:'#f472b6', glow:'rgba(236,72,153,0.4)' },
+};
+const COMPONENT_IDS = {
+  DOC_STORE:'doc-store', CHUNKER:'chunker', EMBEDDER:'embedder',
+  VECTOR_DB:'vector-db', QUERY_ENGINE:'query-engine', RERANKER:'reranker',
+  LLM:'llm', APP_HOST:'app-host',
+};
+const C = COMPONENT_IDS;
+const DOC_COLORS = {
+  'pto-policy':'#10b981','expense-policy':'#3b82f6','employee-directory':'#f59e0b',
+};
+const COMP_COLOR_MAP = {
+  [C.DOC_STORE]:COLORS.docs, [C.CHUNKER]:COLORS.docs, [C.EMBEDDER]:COLORS.embedder,
+  [C.VECTOR_DB]:COLORS.vectordb, [C.QUERY_ENGINE]:COLORS.vectordb, [C.RERANKER]:COLORS.reranker,
+  [C.LLM]:COLORS.llm, [C.APP_HOST]:COLORS.host,
+};
+const MONO = "'SF Mono','Fira Code','Monaco','Consolas',monospace";
+
+// ============================================================================
+// 2. DOCUMENTS
+// ============================================================================
+const DOCUMENTS = [
+  { id:0, filename:'pto-policy.md', title:'PTO Policy', classification:'public', chunkCount:4, preview:'Disney Corp PTO and leave policies' },
+  { id:1, filename:'expense-policy.md', title:'Expense Policy', classification:'public', chunkCount:5, preview:'Travel, meals, and reimbursement guidelines' },
+  { id:2, filename:'employee-directory.md', title:'Employee Directory', classification:'public', chunkCount:3, preview:'Company employee roster by department' },
+];
+
+// ============================================================================
+// 3. CHUNKS (12 total)
+// ============================================================================
+// Chunks use fixed-size windowing (~512 chars) with 50-char overlap.
+// Notice: chunk boundaries are ARBITRARY — they can fall mid-sentence or mid-section.
+// Overlapping text appears at the end of chunk N and the start of chunk N+1.
+const CHUNKS = [
+  // --- pto-policy.md: 4 chunks, 512-char windows, 50-char overlap ---
+  { id:0, docId:0, source:'pto-policy', section:'1/4 [0:512]', classification:'public',
+    text:'Disney Corp believes in maintaining a healthy work-life balance for all employees. Our Paid Time Off (PTO) policy provides generous vacation allowances, sick leave, and holiday schedules. This policy applies to all full-time employees effective January 1, 2024. PTO Allowances — PTO is allocated based on years of service: 0-2 years: 15 days per year, 3-5 years: 20 days, 6-9 years: 25 days, 10+ years: 30 days. PTO accrues on a bi-weekly',
+    position2D:{x:0.15,y:0.12}, embedding:[0.023,-0.014,0.008,0.041,-0.032,0.019,-0.005,0.027] },
+  { id:1, docId:0, source:'pto-policy', section:'2/4 [462:974]', classification:'public',
+    text:'25 days, 10+ years: 30 days. PTO accrues on a bi-weekly basis. Maximum carryover: 5 days per calendar year. Unused PTO beyond the carryover limit will be forfeited. Requesting Time Off — Submit through the HR portal at least 2 weeks in advance. Requests over 5 consecutive days require manager and department head approval. Emergency requests handled case-by-case. Blackout dates may apply during',
+    position2D:{x:0.22,y:0.18}, embedding:[0.021,-0.016,0.011,0.038,-0.029,0.022,-0.007,0.031] },
+  { id:2, docId:0, source:'pto-policy', section:'3/4 [924:1436]', classification:'public',
+    text:'Blackout dates may apply during peak business periods. Q4 (Oct-Dec) requests require 30 days advance notice. Holidays & Sick Leave — Disney Corp observes 11 paid holidays including New Year\'s Day, Independence Day, Thanksgiving, and Christmas. Employees receive 10 sick days per year. Unused sick days do not carry over to the',
+    position2D:{x:0.18,y:0.24}, embedding:[0.019,-0.012,0.009,0.035,-0.028,0.017,-0.003,0.024] },
+  { id:3, docId:0, source:'pto-policy', section:'4/4 [1386:1720]', classification:'public',
+    text:'Unused sick days do not carry over to the next calendar year. Sick leave may be used for personal illness, medical appointments, or care of an immediate family member. Documentation required for absences exceeding 3 consecutive days.',
+    position2D:{x:0.12,y:0.20}, embedding:[0.025,-0.018,0.006,0.043,-0.035,0.021,-0.008,0.029] },
+  // --- expense-policy.md: 5 chunks, 512-char windows, 50-char overlap ---
+  { id:4, docId:1, source:'expense-policy', section:'1/5 [0:512]', classification:'public',
+    text:'Travel & Lodging — Airfare: Economy class for flights under 6 hours; business class over 6 hours with VP approval. Hotels: Up to $250/night standard markets, $350 premium markets (NYC, SF, London). Rental cars: mid-size or below. Ground transportation reimbursed at actual cost. Meals & Entertainment — Meal reimbursement limits per person: Breakfast $20, Lunch $30, Dinner',
+    position2D:{x:0.62,y:0.28}, embedding:[-0.011,0.033,0.042,-0.008,0.015,-0.021,0.037,0.003] },
+  { id:5, docId:1, source:'expense-policy', section:'2/5 [462:974]', classification:'public',
+    text:'Lunch $30, Dinner $50. Client entertainment: up to $150/person with pre-approval. Alcohol reimbursable only during client entertainment, capped at $50/person. Tips included in meal limits. Office & Professional Dev — Office supplies: up to $100/month without approval. Professional development: $2,500/year for conferences, courses, and certifications. Books and',
+    position2D:{x:0.68,y:0.34}, embedding:[-0.009,0.031,0.045,-0.006,0.018,-0.019,0.039,0.005] },
+  { id:6, docId:1, source:'expense-policy', section:'3/5 [924:1436]', classification:'public',
+    text:'Books and subscriptions: $500/year. Home office equipment: one-time $1,000 stipend for remote employees. All professional dev requires manager pre-approval. Submission Process — Submit expense reports within 30 days. Itemized receipts required over $25. Use Concur system. Reports after 60 days may be denied. International expenses must include',
+    position2D:{x:0.56,y:0.38}, embedding:[-0.013,0.029,0.038,-0.011,0.012,-0.024,0.034,0.001] },
+  { id:7, docId:1, source:'expense-policy', section:'4/5 [1386:1898]', classification:'public',
+    text:'International expenses must include currency conversion at the exchange rate on expense date. Per diem rates for international travel per GSA tables. Approval Thresholds — Up to $500: Manager approval. $500-$2K: Department Head. $2K-$5K: VP approval. Over $5K: CFO approval. Capital expenditures over $10K require board',
+    position2D:{x:0.60,y:0.40}, embedding:[-0.015,0.027,0.036,-0.013,0.010,-0.026,0.032,-0.001] },
+  { id:8, docId:1, source:'expense-policy', section:'5/5 [1848:2160]', classification:'public',
+    text:'Capital expenditures over $10K require board notification. All recurring expenses over $1,000/month need annual review. Emergency expenses may be submitted retroactively with justification memo signed by department head.',
+    position2D:{x:0.66,y:0.42}, embedding:[-0.010,0.035,0.040,-0.007,0.016,-0.020,0.036,0.004] },
+  // --- employee-directory.md: 3 chunks, 512-char windows, 50-char overlap ---
+  { id:9, docId:2, source:'employee-directory', section:'1/3 [0:512]', classification:'public',
+    text:'Engineering Department — Mickey Mouse: Senior Software Engineer, Orlando office, Employee ID: EMP-001, Start date: 2019. Minnie Mouse: Staff Software Engineer, Orlando, EMP-002, since 2018. Donald Duck: Software Engineer, Anaheim, EMP-003, since 2021. Goofy: Junior Developer, Orlando, EMP-004, since 2023. Product Department — Snow White: Product',
+    position2D:{x:0.20,y:0.58}, embedding:[0.044,-0.003,-0.022,0.016,0.028,-0.038,0.009,0.033] },
+  { id:10, docId:2, source:'employee-directory', section:'2/3 [462:870]', classification:'public',
+    text:'Product Department — Snow White: Product Manager, Burbank, EMP-005, since 2020. Cinderella: UX Designer, Burbank, EMP-006, since 2021. Elsa: Data Analyst, Remote, EMP-007, since 2022. Executive Leadership — Walt Disney: Chief Executive Officer, Burbank',
+    position2D:{x:0.26,y:0.62}, embedding:[0.042,-0.005,-0.020,0.018,0.026,-0.036,0.011,0.031] },
+  { id:11, docId:2, source:'employee-directory', section:'3/3 [820:1100]', classification:'public',
+    text:'Walt Disney: Chief Executive Officer, Burbank office, EMP-008, since 2015. Reports to Board of Directors. Oversees all departments and strategic initiatives. Contact: walt@disney-corp.com',
+    position2D:{x:0.14,y:0.65}, embedding:[0.040,-0.007,-0.018,0.020,0.024,-0.034,0.013,0.029] },
+];
+
+// ============================================================================
+// 4. QUERIES (2 total)
+// ============================================================================
+const QUERIES = [
+  {
+    id:0, text:'What is our PTO policy?',
+    position2D:{x:0.18,y:0.16}, embedding:[0.022,-0.015,0.010,0.040,-0.031,0.020,-0.006,0.028],
+    similarities:{0:0.92,1:0.89,2:0.81,3:0.84,4:0.22,5:0.18,6:0.15,7:0.14,8:0.16,9:0.35,10:0.28,11:0.25},
+    topK:[0,1,3],
+    reranked:null, filtered:null,
+    llmPrompt:'System: You are a helpful corporate assistant. Answer questions based ONLY on the provided context. Include citation numbers [1], [2], etc. If the context doesn\'t contain the answer, say so.\n\nContext:\n[1] Source: pto-policy.md — chunk 1/4 [0:512]\nDisney Corp believes in maintaining a healthy work-life balance...PTO is allocated based on years of service: 0-2 years: 15 days, 3-5 years: 20 days, 6-9 years: 25 days, 10+ years: 30 days. PTO accrues on a bi-weekly\n\n[2] Source: pto-policy.md — chunk 2/4 [462:974]\n...PTO accrues on a bi-weekly basis. Maximum carryover: 5 days per calendar year. Unused PTO beyond the carryover limit will be forfeited. Requesting Time Off — Submit through the HR portal at least 2 weeks in advance...\n\n[3] Source: pto-policy.md — chunk 4/4 [1386:1720]\nUnused sick days do not carry over to the next calendar year. Sick leave may be used for personal illness, medical appointments, or care of an immediate family member.\n\nUser: What is our PTO policy?',
+    llmResponse:'According to the PTO policy, Disney Corp provides PTO based on years of service: employees with 0-2 years receive 15 days, 3-5 years get 20 days, 6-9 years get 25 days, and 10+ years receive 30 days per year. PTO accrues bi-weekly with a maximum carryover of 5 days per calendar year [1][2]. The company also observes 11 paid holidays and provides 10 sick days annually [3].',
+    citations:[{id:1,chunkId:0,source:'pto-policy.md',section:'1/4 [0:512]'},{id:2,chunkId:1,source:'pto-policy.md',section:'2/4 [462:974]'},{id:3,chunkId:3,source:'pto-policy.md',section:'4/4 [1386:1720]'}],
+  },
+  {
+    id:1, text:"What's the meal reimbursement limit for business travel?",
+    position2D:{x:0.64,y:0.32}, embedding:[-0.010,0.032,0.043,-0.007,0.017,-0.020,0.038,0.004],
+    similarities:{0:0.18,1:0.15,2:0.55,3:0.12,4:0.85,5:0.88,6:0.68,7:0.72,8:0.48,9:0.10,10:0.08,11:0.06},
+    topK:[5,4,7,6,2],
+    reranked:[{chunkId:5,score:0.95,orig:0.88},{chunkId:4,score:0.91,orig:0.85},{chunkId:8,score:0.78,orig:0.48},{chunkId:7,score:0.52,orig:0.72},{chunkId:6,score:0.48,orig:0.68}],
+    filtered:null,
+    llmPrompt:'System: You are a helpful corporate assistant. Answer questions based ONLY on the provided context. Include citation numbers [1], [2], etc.\n\nContext:\n[1] Source: expense-policy.md — chunk 2/5 [462:974]\nLunch $30, Dinner $50. Client entertainment: up to $150/person with pre-approval. Alcohol reimbursable only during client entertainment, capped at $50/person. Tips included in meal limits. Office & Professional Dev...\n\n[2] Source: expense-policy.md — chunk 1/5 [0:512]\nTravel & Lodging — Airfare: Economy class for flights under 6 hours; business class over 6 hours with VP approval. Hotels: Up to $250/night standard markets, $350 premium markets...Meals & Entertainment — Meal reimbursement limits per person: Breakfast $20, Lunch $30, Dinner\n\n[3] Source: expense-policy.md — chunk 5/5 [1848:2160]\nCapital expenditures over $10K require board notification. All recurring expenses over $1,000/month need annual review. Emergency expenses may be submitted retroactively with justification memo.\n\nUser: What\'s the meal reimbursement limit for business travel?',
+    llmResponse:'For business travel, meal reimbursement limits are: Breakfast up to $20, Lunch up to $30, and Dinner up to $50 per person [1][2]. Client entertainment meals can be up to $150 per person but require pre-approval. Alcohol is reimbursable only during client entertainment, capped at $50 per person [1]. All meal expenses over $25 require itemized receipts [3].',
+    citations:[{id:1,chunkId:5,source:'expense-policy.md',section:'2/5 [462:974]'},{id:2,chunkId:4,source:'expense-policy.md',section:'1/5 [0:512]'},{id:3,chunkId:8,source:'expense-policy.md',section:'5/5 [1848:2160]'}],
+  },
+];
+
+// ============================================================================
+// 5. ACT METADATA
+// ============================================================================
+const ACT_METADATA = [
+  null,
+  { number:1, title:'Ingestion Pipeline', subtitle:'The Setup', description:'Watch 3 documents become 12 searchable vector chunks.', watchFor:'Notice how documents cluster by topic in the vector space.' },
+  { number:2, title:'Simple Retrieval', subtitle:'The Basic Flow', description:'A question finds its answer through vector similarity.', watchFor:'The query lands near the PTO cluster — semantic search at work.' },
+  { number:3, title:'Multi-Doc Retrieval', subtitle:'Re-ranking Saves the Day', description:"When initial search isn't enough, the re-ranker improves results.", watchFor:'Watch the re-ranker reorder results — promoting relevant chunks.' },
+];
+
+// ============================================================================
+// 6. STEP SEQUENCES (27 steps)
+// ============================================================================
+const STEPS = [
+  // === ACT 1: Ingestion Pipeline (10 steps) ===
+  { id:'a1s1', act:1, phase:'loading', label:'Document Corpus Overview',
+    activeComponents:[C.DOC_STORE], dataFlow:null,
+    narration:"Before any question can be answered, we need to prepare our knowledge base. Here are 3 internal documents. Each will go through the ingestion pipeline: loading, chunking, embedding, and indexing.",
+    stateMutations:{systemPhase:'ingesting',ingestionPhase:'loading'},
+    chatUpdate:null, chunkLogUpdate:null, inspectorContent:'documents', vectorSpaceUpdate:null },
+  { id:'a1s2', act:1, phase:'loading', label:'Load PTO Policy',
+    activeComponents:[C.DOC_STORE,C.CHUNKER], dataFlow:{from:C.DOC_STORE,to:C.CHUNKER,label:'raw text'},
+    narration:"First document loaded: pto-policy.md. This public policy covers vacation time, sick leave, and holidays. The raw text needs to be split into smaller, searchable pieces.",
+    stateMutations:{currentDocIndex:0},
+    chatUpdate:null, chunkLogUpdate:null, inspectorContent:'chunk:0', vectorSpaceUpdate:null },
+  { id:'a1s3', act:1, phase:'chunking', label:'Chunk PTO Policy → 4 Chunks',
+    activeComponents:[C.CHUNKER], dataFlow:null,
+    narration:"The chunking engine uses fixed-size windowing: ~512 characters per chunk with 50-character overlap between consecutive chunks. This means chunk boundaries can fall mid-sentence — the overlap ensures no information is lost at the seams. 4 chunks created from pto-policy.md.",
+    stateMutations:{},
+    chatUpdate:null, chunkLogUpdate:[{type:'created',chunkId:0},{type:'created',chunkId:1},{type:'created',chunkId:2},{type:'created',chunkId:3}], inspectorContent:'chunk:1', vectorSpaceUpdate:null },
+  { id:'a1s4', act:1, phase:'embedding', label:'Embed PTO Chunks',
+    activeComponents:[C.EMBEDDER], dataFlow:{from:C.CHUNKER,to:C.EMBEDDER,label:'chunks'},
+    narration:"Each chunk is transformed into a dense vector — hundreds to thousands of numbers (the exact count depends on the embedding model — common sizes include 768, 1024, and 1536) capturing semantic meaning. 'Work-life balance' and 'vacation policy' end up as neighbors in vector space, even though they share no keywords. Note: the 2D scatter plot is a dimensionality reduction (t-SNE) of the actual high-dimensional vectors — real distances are far richer than what the projection can show.",
+    stateMutations:{},
+    chatUpdate:null, chunkLogUpdate:null, inspectorContent:'chunk:0', vectorSpaceUpdate:{addChunks:[0,1,2,3]} },
+  { id:'a1s5', act:1, phase:'indexing', label:'Index PTO Chunks in Vector DB',
+    activeComponents:[C.VECTOR_DB], dataFlow:{from:C.EMBEDDER,to:C.VECTOR_DB,label:'vectors'},
+    narration:"The 4 PTO vectors are stored in the vector database with their metadata — source file, byte range, and classification. Metadata travels with the vector so retrieval results carry provenance. 4 of 12 chunks indexed.",
+    stateMutations:{chunksIndexed:4},
+    chatUpdate:null, chunkLogUpdate:null, inspectorContent:'chunk:3', vectorSpaceUpdate:null },
+  { id:'a1s6', act:1, phase:'chunking', label:'Load & Chunk Expense Policy → 5 Chunks',
+    activeComponents:[C.DOC_STORE,C.CHUNKER], dataFlow:{from:C.DOC_STORE,to:C.CHUNKER,label:'raw text'},
+    narration:"Expense policy loaded and chunked into 5 windows of ~512 characters each, with 50-char overlaps. Notice: the meal limits section gets split across chunks 4 and 5 — a single topic can span multiple chunks. The overlap region preserves continuity at the boundary.",
+    stateMutations:{currentDocIndex:1},
+    chatUpdate:null, chunkLogUpdate:[{type:'created',chunkId:4},{type:'created',chunkId:5},{type:'created',chunkId:6},{type:'created',chunkId:7},{type:'created',chunkId:8}], inspectorContent:'chunk:5', vectorSpaceUpdate:null },
+  { id:'a1s7', act:1, phase:'indexing', label:'Embed & Index Expense Chunks',
+    activeComponents:[C.EMBEDDER,C.VECTOR_DB], dataFlow:{from:C.EMBEDDER,to:C.VECTOR_DB,label:'vectors'},
+    narration:"5 expense vectors embedded and stored. Watch them cluster together in vector space — semantically related content naturally groups, even though chunk boundaries are arbitrary. 9 of 12 chunks indexed.",
+    stateMutations:{chunksIndexed:9},
+    chatUpdate:null, chunkLogUpdate:null, inspectorContent:'chunk:8', vectorSpaceUpdate:{addChunks:[4,5,6,7,8]} },
+  { id:'a1s8', act:1, phase:'embedding', label:'Load & Process Employee Directory → 3 Chunks',
+    activeComponents:[C.DOC_STORE,C.CHUNKER,C.EMBEDDER], dataFlow:{from:C.CHUNKER,to:C.EMBEDDER,label:'chunks'},
+    narration:"The employee directory is split into 3 chunks via the same fixed-size windowing. Department boundaries don't align with chunk boundaries — Engineering and Product get split across chunks 9 and 10. Notice these vectors land in a different region — people data is semantically distinct from policy documents.",
+    stateMutations:{currentDocIndex:2},
+    chatUpdate:null, chunkLogUpdate:[{type:'created',chunkId:9},{type:'created',chunkId:10},{type:'created',chunkId:11}], inspectorContent:'chunk:9', vectorSpaceUpdate:{addChunks:[9,10,11]} },
+  { id:'a1s9', act:1, phase:'indexing', label:'Index Employee Chunks',
+    activeComponents:[C.VECTOR_DB], dataFlow:{from:C.EMBEDDER,to:C.VECTOR_DB,label:'vectors'},
+    narration:"12 chunks indexed across 3 documents. The vector database is building up — each entry is a vector plus metadata (source, byte range, classification). One more step to finalize the index.",
+    stateMutations:{chunksIndexed:12},
+    chatUpdate:null, chunkLogUpdate:null, inspectorContent:'chunk:11', vectorSpaceUpdate:null },
+  { id:'a1s10', act:1, phase:'indexing', label:'Indexing Complete — 12 Chunks Ready',
+    activeComponents:[C.VECTOR_DB], dataFlow:null,
+    narration:"All 12 chunks are indexed in the vector database. The ingestion pipeline is complete — 3 documents became 12 searchable vectors with metadata. Fixed-size windowing with overlap ensured no information falls through the cracks. The system is ready for queries.",
+    stateMutations:{chunksIndexed:12,ingestionComplete:true},
+    chatUpdate:null, chunkLogUpdate:null, inspectorContent:'documents', vectorSpaceUpdate:null },
+
+  // === ACT 2: Simple Retrieval (8 steps) ===
+  { id:'a2s1', act:2, phase:'query_start', label:"User Asks: 'What is our PTO policy?'",
+    activeComponents:[C.APP_HOST], dataFlow:null,
+    narration:"A user asks a straightforward question. The host receives the query and begins the retrieval-augmented generation pipeline. Watch the question become a vector, find matching chunks, and produce a grounded answer.",
+    stateMutations:{systemPhase:'querying',activeQueryIndex:0},
+    chatUpdate:{role:'user',content:'What is our PTO policy?'}, chunkLogUpdate:null, inspectorContent:null, vectorSpaceUpdate:null },
+  { id:'a2s2', act:2, phase:'query_embedding', label:'Embed the Query',
+    activeComponents:[C.EMBEDDER], dataFlow:{from:C.APP_HOST,to:C.EMBEDDER,label:'query text'},
+    narration:"The query is embedded using the SAME model that embedded the document chunks. This is critical — if the models don't match, vectors live in incompatible spaces and similarity search fails completely.",
+    stateMutations:{},
+    chatUpdate:null, chunkLogUpdate:null, inspectorContent:'query:0', vectorSpaceUpdate:{showQuery:0} },
+  { id:'a2s3', act:2, phase:'searching', label:'Similarity Search',
+    activeComponents:[C.QUERY_ENGINE,C.VECTOR_DB], dataFlow:{from:C.EMBEDDER,to:C.QUERY_ENGINE,label:'query vector'},
+    narration:"The query engine computes cosine similarity between the query vector and all 12 chunk vectors in the full high-dimensional space (not the 2D projection shown in the scatter plot). Semantically similar content scores high — 'PTO policy' matches 'work-life balance' even without shared words. With 12 chunks, brute-force comparison is fine, but production systems with millions of vectors use approximate nearest neighbor (ANN) algorithms like HNSW for speed — trading a small amount of accuracy for massive performance gains. Note: in simpler implementations, the application calls the vector DB search API directly — the 'query engine' shown here is a framework abstraction used by tools like LlamaIndex.",
+    stateMutations:{},
+    chatUpdate:null, chunkLogUpdate:[{type:'retrieved',chunkId:0,score:0.92},{type:'retrieved',chunkId:1,score:0.89},{type:'retrieved',chunkId:3,score:0.84}], inspectorContent:null, vectorSpaceUpdate:{showQuery:0,highlightNearest:{queryId:0,topK:3}} },
+  { id:'a2s4', act:2, phase:'searching', label:'Top-K Results',
+    activeComponents:[C.QUERY_ENGINE], dataFlow:null,
+    narration:"Top 3 results — all from pto-policy.md: Chunk 0 covering overview+allowances (0.92), Chunk 1 with carryover+requests (0.89), and Chunk 3 covering sick leave (0.84). Vector search found the right content by meaning, not keywords — even though chunk boundaries are arbitrary.",
+    stateMutations:{},
+    chatUpdate:null, chunkLogUpdate:null, inspectorContent:'results:0', vectorSpaceUpdate:null },
+  { id:'a2s5', act:2, phase:'assembling', label:'Assemble Context & Prompt',
+    activeComponents:[C.APP_HOST], dataFlow:null,
+    narration:"The host formats the top 3 chunks into a context block with source labels [1], [2], [3] and constructs the complete LLM prompt: system instruction + retrieved context + user question. The model will only see these 3 chunks — not all 12.",
+    stateMutations:{},
+    chatUpdate:null, chunkLogUpdate:null, inspectorContent:'prompt:0', vectorSpaceUpdate:null },
+  { id:'a2s6', act:2, phase:'generating', label:'LLM Generates Response',
+    activeComponents:[C.LLM], dataFlow:{from:C.APP_HOST,to:C.LLM,label:'prompt'},
+    narration:"The LLM reads the prompt, reasons over the provided context, and generates a response with inline citations [1][2][3]. It ONLY uses information from the retrieved chunks — this is how RAG grounds the model's output. Caveat: citation accuracy depends heavily on prompt engineering — models don't always cite correctly, and may hallucinate or misattribute citations without careful instruction.",
+    stateMutations:{},
+    chatUpdate:{role:'thinking',content:'Generating response...'}, chunkLogUpdate:null, inspectorContent:'prompt:0', vectorSpaceUpdate:null },
+  { id:'a2s7', act:2, phase:'responding', label:'Response with Citations',
+    activeComponents:[C.APP_HOST], dataFlow:{from:C.LLM,to:C.APP_HOST,label:'response'},
+    narration:"The response appears with citations mapping to source chunks. Users can verify every claim. This is RAG's core value — grounded, traceable, verifiable answers instead of hallucinations. In production, systems often verify citations against retrieved chunks via post-processing to catch misattributions.",
+    stateMutations:{queryComplete:true},
+    chatUpdate:{role:'assistant',content:QUERIES[0].llmResponse,citations:QUERIES[0].citations}, chunkLogUpdate:null, inspectorContent:'response:0', vectorSpaceUpdate:null },
+
+  // === ACT 3: Multi-Doc + Re-ranking (10 steps) ===
+  { id:'a3s1', act:3, phase:'query_start', label:'User Asks About Meal Reimbursement',
+    activeComponents:[C.APP_HOST], dataFlow:null,
+    narration:"A more complex query spanning policy details. The initial vector search will get close, but watch how re-ranking improves the final results.",
+    stateMutations:{activeQueryIndex:1,queryComplete:false},
+    chatUpdate:{role:'user',content:"What's the meal reimbursement limit for business travel?"}, chunkLogUpdate:null, inspectorContent:null, vectorSpaceUpdate:{showQuery:null,highlightNearest:null} },
+  { id:'a3s2', act:3, phase:'query_embedding', label:'Embed the Query',
+    activeComponents:[C.EMBEDDER], dataFlow:{from:C.APP_HOST,to:C.EMBEDDER,label:'query text'},
+    narration:"Query embedded, landing near the expense policy cluster. But 'meal reimbursement' and 'business travel' span multiple sections — watch how the initial ranking handles this.",
+    stateMutations:{},
+    chatUpdate:null, chunkLogUpdate:null, inspectorContent:'query:1', vectorSpaceUpdate:{showQuery:1} },
+  { id:'a3s3', act:3, phase:'searching', label:'Initial Similarity Search',
+    activeComponents:[C.QUERY_ENGINE,C.VECTOR_DB], dataFlow:{from:C.EMBEDDER,to:C.QUERY_ENGINE,label:'query vector'},
+    narration:"Cosine similarity computed against all 12 chunks. The top 5 are mostly expense-policy.md, but the ordering isn't perfect.",
+    stateMutations:{},
+    chatUpdate:null, chunkLogUpdate:[{type:'retrieved',chunkId:5,score:0.88},{type:'retrieved',chunkId:4,score:0.85},{type:'retrieved',chunkId:7,score:0.72},{type:'retrieved',chunkId:6,score:0.68},{type:'retrieved',chunkId:2,score:0.55}], inspectorContent:null, vectorSpaceUpdate:{showQuery:1,highlightNearest:{queryId:1,topK:5}} },
+  { id:'a3s4', act:3, phase:'searching', label:'Initial Ranking (Imperfect)',
+    activeComponents:[C.QUERY_ENGINE], dataFlow:null,
+    narration:"Initial results: Chunk 5 with meal limits (0.88), Chunk 4 with travel+meals (0.85), Chunk 7 with approvals (0.72), Chunk 6 with office perks (0.68), PTO chunk (0.55). Problem: Chunk 7 outranks the more relevant 'Approval Thresholds' in Chunk 8 — embedding similarity isn't always perfect ordering.",
+    stateMutations:{},
+    chatUpdate:null, chunkLogUpdate:null, inspectorContent:'results:1', vectorSpaceUpdate:null },
+  { id:'a3s5', act:3, phase:'reranking', label:'Enter Re-ranking Phase',
+    activeComponents:[C.RERANKER], dataFlow:{from:C.QUERY_ENGINE,to:C.RERANKER,label:'top-5 chunks'},
+    narration:"The re-ranker uses a cross-encoder model that reads each (query, chunk) pair together. Unlike embedding comparison which scores vectors independently, the cross-encoder understands the relationship between query and content.",
+    stateMutations:{},
+    chatUpdate:null, chunkLogUpdate:null, inspectorContent:null, vectorSpaceUpdate:null },
+  { id:'a3s6', act:3, phase:'reranking', label:'Re-ranker Scores Each Pair',
+    activeComponents:[C.RERANKER], dataFlow:null,
+    narration:"The cross-encoder evaluates all 5 candidates against the query. Meals jumps from 0.88 to 0.95. Approval Thresholds wasn't even in the initial top 3 but now scores 0.78 — the re-ranker recognized its relevance.",
+    stateMutations:{},
+    chatUpdate:null, chunkLogUpdate:[{type:'reranked',chunkId:5,score:0.95,origScore:0.88},{type:'reranked',chunkId:4,score:0.91,origScore:0.85},{type:'reranked',chunkId:8,score:0.78,origScore:0.48},{type:'reranked',chunkId:7,score:0.52,origScore:0.72},{type:'reranked',chunkId:6,score:0.48,origScore:0.68}], inspectorContent:'reranked:1', vectorSpaceUpdate:null },
+  { id:'a3s7', act:3, phase:'reranking', label:'Re-ranked Results',
+    activeComponents:[C.RERANKER], dataFlow:null,
+    narration:"Final ranking: Meals (0.95 ↑), Travel (0.91 ↑), Approval Thresholds (0.78 — NEW!). The re-ranker promoted approval info and demoted less relevant chunks. Better retrieval means better answers.",
+    stateMutations:{},
+    chatUpdate:null, chunkLogUpdate:null, inspectorContent:'reranked:1', vectorSpaceUpdate:null },
+  { id:'a3s8', act:3, phase:'assembling', label:'Assemble Re-ranked Context',
+    activeComponents:[C.APP_HOST], dataFlow:null,
+    narration:"Top 3 re-ranked chunks assembled into the prompt. Notice Approval Thresholds is now included — information that would have been missed without re-ranking.",
+    stateMutations:{},
+    chatUpdate:null, chunkLogUpdate:null, inspectorContent:'prompt:1', vectorSpaceUpdate:null },
+  { id:'a3s9', act:3, phase:'generating', label:'LLM Generates Response',
+    activeComponents:[C.LLM], dataFlow:{from:C.APP_HOST,to:C.LLM,label:'prompt'},
+    narration:"The LLM receives refined context covering meal limits, travel policies, AND approval thresholds — a more complete picture thanks to re-ranking.",
+    stateMutations:{},
+    chatUpdate:{role:'thinking',content:'Generating response...'}, chunkLogUpdate:null, inspectorContent:'prompt:1', vectorSpaceUpdate:null },
+  { id:'a3s10', act:3, phase:'responding', label:'Multi-Source Citations',
+    activeComponents:[C.APP_HOST], dataFlow:{from:C.LLM,to:C.APP_HOST,label:'response'},
+    narration:"Response cites three expense policy sections. Re-ranking ensured the most relevant chunks were included. Without it, the answer would have missed approval threshold details. As with any RAG system, production deployments often post-process citations to verify they accurately reference the retrieved chunks.",
+    stateMutations:{queryComplete:true},
+    chatUpdate:{role:'assistant',content:QUERIES[1].llmResponse,citations:QUERIES[1].citations}, chunkLogUpdate:null, inspectorContent:'response:1', vectorSpaceUpdate:null },
+
+];
+
+const ACT_OFFSETS = {1:0,2:10,3:17};
+const ACT_LENGTHS = {1:10,2:7,3:10};
+const INITIAL_STATE = {
+  systemPhase:'landing', ingestionPhase:null, currentDocIndex:-1,
+  chunksIndexed:0, ingestionComplete:false, activeQueryIndex:-1,
+  queryComplete:false,
+};
+
+// ============================================================================
+// 7. useSimulation HOOK
+// ============================================================================
+function useSimulation() {
+  const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [currentAct, setCurrentAct] = useState(1);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playSpeed, setPlaySpeed] = useState(2500);
+  const [componentStates, setComponentStates] = useState({...INITIAL_STATE});
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chunkLog, setChunkLog] = useState([]);
+  const [vectorSpace, setVectorSpace] = useState({visibleChunks:[],showQuery:null,highlightNearest:null,filterChunks:[]});
+  const intervalRef = useRef(null);
+
+  const currentStep = STEPS[currentStepIndex] || STEPS[0];
+  const actStepIndex = currentStepIndex - (ACT_OFFSETS[currentAct] ?? 0);
+  const totalActSteps = ACT_LENGTHS[currentAct] ?? 0;
+  const activeComponents = currentStep.activeComponents || [];
+  const dataFlow = currentStep.dataFlow || null;
+
+  const computeStateAtStep = useCallback((idx) => {
+    const s = {...INITIAL_STATE};
+    for (let i = 0; i <= idx; i++) { if (STEPS[i]?.stateMutations) Object.assign(s, STEPS[i].stateMutations); }
+    return s;
+  }, []);
+
+  const computeChatAtStep = useCallback((idx) => {
+    const msgs = [];
+    for (let i = 0; i <= idx; i++) {
+      const u = STEPS[i]?.chatUpdate;
+      if (!u) continue;
+      if (u.role === 'thinking') {
+        const ti = msgs.findIndex(m => m.role === 'thinking');
+        if (ti >= 0) msgs.splice(ti, 1);
+        msgs.push({...u, stepId: STEPS[i].id});
+      } else if (u.role === 'assistant') {
+        const ti = msgs.findIndex(m => m.role === 'thinking');
+        if (ti >= 0) msgs.splice(ti, 1);
+        msgs.push({...u, stepId: STEPS[i].id});
+      } else {
+        msgs.push({...u, stepId: STEPS[i].id});
+      }
+    }
+    return msgs;
+  }, []);
+
+  const computeChunkLogAtStep = useCallback((idx) => {
+    const log = [];
+    for (let i = 0; i <= idx; i++) {
+      if (STEPS[i]?.chunkLogUpdate) STEPS[i].chunkLogUpdate.forEach(e => log.push({...e, stepIndex:i}));
+    }
+    return log;
+  }, []);
+
+  const computeVectorSpaceAtStep = useCallback((idx) => {
+    const r = {visibleChunks:new Set(), showQuery:null, highlightNearest:null, filterChunks:new Set()};
+    for (let i = 0; i <= idx; i++) {
+      const u = STEPS[i]?.vectorSpaceUpdate;
+      if (!u) continue;
+      if (u.addChunks) u.addChunks.forEach(id => r.visibleChunks.add(id));
+      if (u.showQuery !== undefined) r.showQuery = u.showQuery;
+      if (u.highlightNearest !== undefined) r.highlightNearest = u.highlightNearest;
+      if (u.filterChunks) u.filterChunks.forEach(id => r.filterChunks.add(id));
+    }
+    return {visibleChunks:[...r.visibleChunks], showQuery:r.showQuery, highlightNearest:r.highlightNearest, filterChunks:[...r.filterChunks]};
+  }, []);
+
+  const goToStep = useCallback((index) => {
+    const i = Math.max(0, Math.min(index, STEPS.length - 1));
+    setCurrentStepIndex(i);
+    setCurrentAct(STEPS[i].act);
+    setComponentStates(computeStateAtStep(i));
+    setChatMessages(computeChatAtStep(i));
+    setChunkLog(computeChunkLogAtStep(i));
+    setVectorSpace(computeVectorSpaceAtStep(i));
+  }, [computeStateAtStep, computeChatAtStep, computeChunkLogAtStep, computeVectorSpaceAtStep]);
+
+  const next = useCallback(() => {
+    if (currentStepIndex < STEPS.length - 1) goToStep(currentStepIndex + 1);
+    else setIsPlaying(false);
+  }, [currentStepIndex, goToStep]);
+
+  const prev = useCallback(() => {
+    if (currentStepIndex > 0) goToStep(currentStepIndex - 1);
+  }, [currentStepIndex, goToStep]);
+
+  const goToAct = useCallback((act) => {
+    if (ACT_OFFSETS[act] !== undefined) goToStep(ACT_OFFSETS[act]);
+  }, [goToStep]);
+
+  const play = useCallback(() => setIsPlaying(true), []);
+  const pause = useCallback(() => setIsPlaying(false), []);
+  const togglePlay = useCallback(() => setIsPlaying(p => !p), []);
+  const reset = useCallback(() => { setIsPlaying(false); goToStep(0); }, [goToStep]);
+
+  useEffect(() => {
+    if (isPlaying) {
+      intervalRef.current = setInterval(() => {
+        setCurrentStepIndex(prev => {
+          const ni = prev + 1;
+          if (ni >= STEPS.length) { setIsPlaying(false); return prev; }
+          setCurrentAct(STEPS[ni].act);
+          setComponentStates(computeStateAtStep(ni));
+          setChatMessages(computeChatAtStep(ni));
+          setChunkLog(computeChunkLogAtStep(ni));
+          setVectorSpace(computeVectorSpaceAtStep(ni));
+          return ni;
+        });
+      }, playSpeed);
+    }
+    return () => { if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; } };
+  }, [isPlaying, playSpeed, computeStateAtStep, computeChatAtStep, computeChunkLogAtStep, computeVectorSpaceAtStep]);
+
+  return {
+    state:componentStates, currentStep, currentStepIndex, currentAct,
+    actStepIndex, totalActSteps, steps:STEPS, totalSteps:STEPS.length,
+    next, prev, play, pause, togglePlay, goToAct, goToStep, reset,
+    isPlaying, playSpeed, setPlaySpeed,
+    chatMessages, chunkLog, vectorSpace, activeComponents, dataFlow,
+    actMetadata:ACT_METADATA, actOffsets:ACT_OFFSETS, actLengths:ACT_LENGTHS,
+  };
+}
+
+// ============================================================================
+// 8. ARCHITECTURE DIAGRAM
+// ============================================================================
+const PIPELINE_BOXES = [
+  { id:C.DOC_STORE, label:'Document\nStore', x:10, y:20, row:0, color:COLORS.docs },
+  { id:C.CHUNKER, label:'Chunking\nEngine', x:185, y:20, row:0, color:COLORS.docs },
+  { id:C.EMBEDDER, label:'Embedding\nModel', x:360, y:20, row:0, color:COLORS.embedder },
+  { id:C.VECTOR_DB, label:'Vector\nDB', x:535, y:20, row:0, color:COLORS.vectordb },
+  { id:C.QUERY_ENGINE, label:'Query\nEngine', x:535, y:130, row:1, color:COLORS.vectordb },
+  { id:C.RERANKER, label:'Re-ranker', x:360, y:130, row:1, color:COLORS.reranker },
+  { id:C.LLM, label:'LLM', x:185, y:130, row:1, color:COLORS.llm },
+  { id:C.APP_HOST, label:'App\nHost', x:10, y:130, row:1, color:COLORS.host },
+];
+const PIPELINE_ARROWS = [
+  {from:C.DOC_STORE,to:C.CHUNKER},{from:C.CHUNKER,to:C.EMBEDDER},{from:C.EMBEDDER,to:C.VECTOR_DB},
+  {from:C.VECTOR_DB,to:C.QUERY_ENGINE,vertical:true},
+  {from:C.QUERY_ENGINE,to:C.RERANKER,reverse:true},{from:C.RERANKER,to:C.LLM,reverse:true},{from:C.LLM,to:C.APP_HOST,reverse:true},
+];
+const BOX_W = 130, BOX_H = 55;
+
+function PipelineBox({box, isActive}) {
+  const c = box.color;
+  return (
+    <g>
+      {isActive && <rect x={box.x-3} y={box.y-3} width={BOX_W+6} height={BOX_H+6} rx={12} fill="none" stroke={c.border} strokeWidth={1.5} opacity={0.5}>
+        <animate attributeName="opacity" values="0.3;0.7;0.3" dur="2s" repeatCount="indefinite"/>
+      </rect>}
+      <rect x={box.x} y={box.y} width={BOX_W} height={BOX_H} rx={10}
+        fill={isActive ? c.bg : '#1a1a2e'} stroke={isActive ? c.border : '#2a2a3c'}
+        strokeWidth={isActive ? 2 : 1} opacity={isActive ? 1 : 0.4}
+        style={{transition:'all 0.3s'}} />
+      {box.label.split('\n').map((line,i) => (
+        <text key={i} x={box.x+BOX_W/2} y={box.y+BOX_H/2+(i-0.5)*14+4} textAnchor="middle"
+          fill={isActive ? c.text : '#6b7280'} fontSize={12} fontWeight={600}
+          fontFamily="-apple-system,sans-serif" style={{transition:'fill 0.3s'}}>
+          {line}
+        </text>
+      ))}
+    </g>
+  );
+}
+
+function ArchitectureDiagram({activeComponents, dataFlow}) {
+  const activeSet = useMemo(() => new Set(activeComponents), [activeComponents]);
+  return (
+    <svg viewBox="0 0 690 210" style={{width:'100%',height:'100%'}}>
+      <defs>
+        <marker id="arrowR" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth={8} markerHeight={6} orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#4a5568"/>
+        </marker>
+        <marker id="arrowL" viewBox="0 0 10 7" refX="0" refY="3.5" markerWidth={8} markerHeight={6} orient="auto">
+          <polygon points="10 0, 0 3.5, 10 7" fill="#4a5568"/>
+        </marker>
+      </defs>
+      {PIPELINE_ARROWS.map((a,i) => {
+        const fb = PIPELINE_BOXES.find(b=>b.id===a.from);
+        const tb = PIPELINE_BOXES.find(b=>b.id===a.to);
+        if (!fb||!tb) return null;
+        let x1,y1,x2,y2;
+        if (a.vertical) { x1=fb.x+BOX_W/2; y1=fb.y+BOX_H; x2=tb.x+BOX_W/2; y2=tb.y; }
+        else if (a.reverse) { x1=fb.x; y1=fb.y+BOX_H/2; x2=tb.x+BOX_W; y2=tb.y+BOX_H/2; }
+        else { x1=fb.x+BOX_W; y1=fb.y+BOX_H/2; x2=tb.x; y2=tb.y+BOX_H/2; }
+        const isFlowPath = dataFlow && ((dataFlow.from===a.from&&dataFlow.to===a.to)||(dataFlow.from===a.to&&dataFlow.to===a.from));
+        return (
+          <g key={i}>
+            <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={isFlowPath?'#60a5fa':'#2a2a3c'} strokeWidth={isFlowPath?2:1}
+              markerEnd={a.reverse?undefined:"url(#arrowR)"} markerStart={a.reverse?"url(#arrowL)":undefined}
+              style={{transition:'stroke 0.3s'}}/>
+            {isFlowPath && dataFlow.label && (
+              <text x={(x1+x2)/2} y={(y1+y2)/2-8} textAnchor="middle" fill="#60a5fa" fontSize={9} fontFamily={MONO}>{dataFlow.label}</text>
+            )}
+            {isFlowPath && (
+              <circle r={4} fill="#60a5fa">
+                <animateMotion dur="1s" repeatCount="indefinite" path={`M${x1},${y1} L${x2},${y2}`}/>
+              </circle>
+            )}
+          </g>
+        );
+      })}
+      {PIPELINE_BOXES.map(box => <PipelineBox key={box.id} box={box} isActive={activeSet.has(box.id)}/>)}
+    </svg>
+  );
+}
+
+// ============================================================================
+// 9. VECTOR SPACE VIEW
+// ============================================================================
+function VectorSpaceView({vectorSpace}) {
+  const W=690, H=210, PAD=30;
+  const scaleX = x => PAD + x*(W-2*PAD);
+  const scaleY = y => PAD + y*(H-2*PAD);
+  const visSet = useMemo(() => new Set(vectorSpace.visibleChunks), [vectorSpace.visibleChunks]);
+  const filtSet = useMemo(() => new Set(vectorSpace.filterChunks), [vectorSpace.filterChunks]);
+  const query = vectorSpace.showQuery !== null ? QUERIES[vectorSpace.showQuery] : null;
+  const hn = vectorSpace.highlightNearest;
+  const nearestIds = useMemo(() => {
+    if (!hn || !query) return new Set();
+    const sorted = Object.entries(query.similarities).sort((a,b)=>b[1]-a[1]).slice(0,hn.topK).map(e=>parseInt(e[0]));
+    return new Set(sorted);
+  }, [hn, query]);
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'100%'}}>
+      {/* 2D projection disclaimer */}
+      <text x={W/2} y={12} textAnchor="middle" fontSize={8} fill="#64748b" fontStyle="italic">
+        2D projection (t-SNE) of high-dimensional vectors — distances are approximate
+      </text>
+      {/* grid */}
+      {Array.from({length:11},(_,i) => {
+        const x = PAD + i*(W-2*PAD)/10;
+        return <line key={`vx${i}`} x1={x} y1={PAD} x2={x} y2={H-PAD} stroke="#1e293b" strokeWidth={0.5}/>;
+      })}
+      {Array.from({length:7},(_,i) => {
+        const y = PAD + i*(H-2*PAD)/6;
+        return <line key={`vy${i}`} x1={PAD} y1={y} x2={W-PAD} y2={y} stroke="#1e293b" strokeWidth={0.5}/>;
+      })}
+      {/* nearest neighbor lines */}
+      {query && hn && CHUNKS.filter(ch => nearestIds.has(ch.id) && visSet.has(ch.id)).map(ch => {
+        const isFilt = filtSet.has(ch.id);
+        return (
+          <line key={`nn${ch.id}`} x1={scaleX(query.position2D.x)} y1={scaleY(query.position2D.y)}
+            x2={scaleX(ch.position2D.x)} y2={scaleY(ch.position2D.y)}
+            stroke={isFilt ? '#ef4444' : DOC_COLORS[ch.source]} strokeWidth={1.5}
+            strokeDasharray={isFilt ? '4,3' : 'none'} opacity={0.6}/>
+        );
+      })}
+      {/* chunk dots */}
+      {CHUNKS.filter(ch => visSet.has(ch.id)).map(ch => {
+        const cx = scaleX(ch.position2D.x);
+        const cy = scaleY(ch.position2D.y);
+        const isNearest = nearestIds.has(ch.id);
+        const isFilt = filtSet.has(ch.id);
+        const color = DOC_COLORS[ch.source];
+        return (
+          <g key={`ch${ch.id}`}>
+            {isNearest && !isFilt && <circle cx={cx} cy={cy} r={10} fill={color} opacity={0.15}>
+              <animate attributeName="r" values="8;12;8" dur="2s" repeatCount="indefinite"/>
+            </circle>}
+            <circle cx={cx} cy={cy} r={5} fill={isFilt ? '#374151' : color}
+              stroke={isFilt ? '#ef4444' : (isNearest ? '#fff' : 'none')}
+              strokeWidth={isFilt ? 1.5 : (isNearest ? 1.5 : 0)} opacity={isFilt ? 0.4 : 1}/>
+            {isFilt && <text x={cx} y={cy+1} textAnchor="middle" fontSize={7} fill="#ef4444">🔒</text>}
+            {isNearest && query && !isFilt && (
+              <text x={cx+8} y={cy-4} fontSize={9} fill={color} fontFamily={MONO} fontWeight={600}>
+                {query.similarities[ch.id]?.toFixed(2)}
+              </text>
+            )}
+            <title>{`Chunk ${ch.id}: ${ch.source} — ${ch.section}${ch.classification==='confidential'?' [CONFIDENTIAL]':''}\n${ch.text.slice(0,80)}...`}</title>
+          </g>
+        );
+      })}
+      {/* query dot */}
+      {query && (
+        <g>
+          <circle cx={scaleX(query.position2D.x)} cy={scaleY(query.position2D.y)} r={8} fill="none" stroke="#fff" strokeWidth={2}>
+            <animate attributeName="r" values="6;10;6" dur="1.5s" repeatCount="indefinite"/>
+            <animate attributeName="opacity" values="1;0.5;1" dur="1.5s" repeatCount="indefinite"/>
+          </circle>
+          <circle cx={scaleX(query.position2D.x)} cy={scaleY(query.position2D.y)} r={3} fill="#fff"/>
+          <text x={scaleX(query.position2D.x)} y={scaleY(query.position2D.y)-14} textAnchor="middle" fontSize={9} fill="#e2e8f0" fontWeight={600}>Query</text>
+        </g>
+      )}
+      {/* legend */}
+      {Object.entries(DOC_COLORS).map(([name,color],i) => (
+        <g key={name} transform={`translate(${PAD},${H-18+0})`}>
+          <circle cx={i*130} cy={0} r={3} fill={color}/>
+          <text x={i*130+7} y={3} fontSize={8} fill="#9ca3af">{name.replace(/-/g,' ')}</text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+// ============================================================================
+// 10. DIAGRAM PANEL (toggle pipeline / vector space)
+// ============================================================================
+function DiagramPanel({activeComponents, dataFlow, vectorSpace}) {
+  const [view, setView] = useState('pipeline');
+  const hasQuery = vectorSpace.showQuery !== null;
+  const hasChunks = vectorSpace.visibleChunks.length > 0;
+  useEffect(() => {
+    if (hasQuery) setView('vectors');
+    else if (!hasChunks) setView('pipeline');
+  }, [hasQuery, hasChunks]);
+
+  return (
+    <div style={{height:'100%',display:'flex',flexDirection:'column',background:'#0f172a',position:'relative'}}>
+      <div style={{position:'absolute',top:8,right:12,zIndex:10,display:'flex',gap:4}}>
+        {['pipeline','vectors'].map(v => (
+          <button key={v} onClick={()=>setView(v)} style={{
+            padding:'4px 12px',borderRadius:6,border:`1px solid ${view===v?'#3b82f6':'#2a2a3c'}`,
+            background:view===v?'rgba(59,130,246,0.15)':'transparent',color:view===v?'#60a5fa':'#6b7280',
+            fontSize:11,cursor:'pointer',fontFamily:'inherit',transition:'all 0.2s',
+          }}>{v==='pipeline'?'Pipeline View':'Vector Space'}</button>
+        ))}
+      </div>
+      <div style={{flex:1,padding:'8px 12px 4px'}}>
+        {view === 'pipeline'
+          ? <ArchitectureDiagram activeComponents={activeComponents} dataFlow={dataFlow}/>
+          : <VectorSpaceView vectorSpace={vectorSpace}/>
+        }
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// 11. CHUNK LOG
+// ============================================================================
+function ChunkLog({chunkLog, currentStepIndex}) {
+  const scrollRef = useRef(null);
+  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [chunkLog.length]);
+
+  if (chunkLog.length === 0) return (
+    <div style={{height:'100%',display:'flex',alignItems:'center',justifyContent:'center',color:'#4b5563',fontSize:12,fontFamily:MONO}}>
+      Chunks will appear as ingestion progresses
+    </div>
+  );
+
+  return (
+    <div ref={scrollRef} style={{height:'100%',overflowY:'auto',padding:'4px 0'}}>
+      {chunkLog.map((entry,i) => {
+        const ch = CHUNKS[entry.chunkId];
+        if (!ch) return null;
+        const color = DOC_COLORS[ch.source] || '#9ca3af';
+        const isCurrent = entry.stepIndex === currentStepIndex;
+        let icon, label;
+        if (entry.type === 'created') { icon = '📄'; label = `Chunk ${ch.id} — ${ch.source}: ${ch.section}`; }
+        else if (entry.type === 'retrieved') { icon = '🔍'; label = `Chunk ${ch.id} — ${ch.source}: ${ch.section} (${entry.score?.toFixed(2)})`; }
+        else if (entry.type === 'reranked') { icon = '📊'; label = `Chunk ${ch.id} → ${entry.score?.toFixed(2)} (was ${entry.origScore?.toFixed(2)}) ${entry.score>entry.origScore?'↑':'↓'}`; }
+        else if (entry.type === 'filtered') { icon = '🔒'; label = `Filtered: Chunk ${ch.id} — ${ch.source} [CONFIDENTIAL]`; }
+        return (
+          <div key={i} style={{
+            padding:'4px 10px',fontSize:11,fontFamily:MONO,display:'flex',alignItems:'center',gap:6,
+            borderLeft:`2px solid ${entry.type==='filtered'?'#ef4444':color}`,
+            background:isCurrent?'rgba(59,130,246,0.08)':'transparent',
+            opacity:entry.type==='filtered'?0.7:1,
+          }}>
+            <span>{icon}</span>
+            <span style={{color:entry.type==='filtered'?'#ef4444':color}}>{label}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ============================================================================
+// 12. PAYLOAD INSPECTOR
+// ============================================================================
+function PayloadInspector({inspectorContent, currentStep}) {
+  if (!inspectorContent) return (
+    <div style={{height:'100%',display:'flex',alignItems:'center',justifyContent:'center',color:'#4b5563',fontSize:12,fontFamily:MONO}}>
+      Step forward to inspect pipeline data
+    </div>
+  );
+
+  const [type, idxStr] = inspectorContent.split(':');
+  const idx = parseInt(idxStr);
+
+  // Documents overview
+  if (type === 'documents') return (
+    <div style={{padding:12,overflowY:'auto',height:'100%'}}>
+      <div style={{fontSize:11,color:'#9ca3af',marginBottom:8,fontWeight:600,letterSpacing:0.5}}>DOCUMENT CORPUS</div>
+      {DOCUMENTS.map(d => (
+        <div key={d.id} style={{padding:'6px 10px',marginBottom:4,borderRadius:6,border:`1px solid ${d.classification==='confidential'?'#ef4444':'#2a2a3c'}`,
+          background:d.classification==='confidential'?'rgba(239,68,68,0.05)':'rgba(30,41,59,0.5)'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <span style={{color:'#e2e8f0',fontSize:12,fontWeight:600}}>{d.filename}</span>
+            <span style={{fontSize:9,padding:'2px 6px',borderRadius:4,
+              background:d.classification==='confidential'?'rgba(239,68,68,0.15)':'rgba(16,185,129,0.15)',
+              color:d.classification==='confidential'?'#ef4444':'#10b981',fontWeight:600}}>
+              {d.classification.toUpperCase()}
+            </span>
+          </div>
+          <div style={{fontSize:10,color:'#6b7280',marginTop:2}}>{d.preview} • {d.chunkCount} chunks</div>
+        </div>
+      ))}
+    </div>
+  );
+
+  // Chunk detail
+  if (type === 'chunk') {
+    const ch = CHUNKS[idx];
+    if (!ch) return null;
+    return (
+      <div style={{padding:12,overflowY:'auto',height:'100%',fontFamily:MONO,fontSize:11}}>
+        <div style={{fontSize:11,color:'#9ca3af',marginBottom:8,fontWeight:600,letterSpacing:0.5}}>CHUNK {ch.id}</div>
+        <div style={{marginBottom:6}}><span style={{color:'#6b7280'}}>Source: </span><span style={{color:DOC_COLORS[ch.source]}}>{ch.source}.md — {ch.section}</span></div>
+        <div style={{marginBottom:8}}><span style={{color:'#6b7280'}}>Classification: </span>
+          <span style={{color:ch.classification==='confidential'?'#ef4444':'#10b981'}}>{ch.classification}</span></div>
+        <div style={{padding:8,background:'#1e293b',borderRadius:6,marginBottom:8,fontSize:11,lineHeight:1.5,color:'#cbd5e1'}}>{ch.text}</div>
+        <div style={{color:'#6b7280',marginBottom:4}}>Embedding (first 8 dims):</div>
+        <div style={{padding:6,background:'#1e293b',borderRadius:4,color:'#22d3ee',fontSize:10}}>[{ch.embedding.map(v=>v.toFixed(4)).join(', ')}, ...]</div>
+        <div style={{marginTop:6,color:'#6b7280'}}>2D Position: ({ch.position2D.x.toFixed(2)}, {ch.position2D.y.toFixed(2)})</div>
+      </div>
+    );
+  }
+
+  // Query detail
+  if (type === 'query') {
+    const q = QUERIES[idx];
+    if (!q) return null;
+    return (
+      <div style={{padding:12,overflowY:'auto',height:'100%',fontFamily:MONO,fontSize:11}}>
+        <div style={{fontSize:11,color:'#9ca3af',marginBottom:8,fontWeight:600,letterSpacing:0.5}}>QUERY EMBEDDING</div>
+        <div style={{padding:8,background:'#1e293b',borderRadius:6,marginBottom:8,color:'#e2e8f0',fontSize:12}}>"{q.text}"</div>
+        <div style={{color:'#6b7280',marginBottom:4}}>Query Vector (first 8 dims):</div>
+        <div style={{padding:6,background:'#1e293b',borderRadius:4,color:'#22d3ee',fontSize:10,marginBottom:6}}>[{q.embedding.map(v=>v.toFixed(4)).join(', ')}, ...]</div>
+        <div style={{color:'#6b7280'}}>2D Position: ({q.position2D.x.toFixed(2)}, {q.position2D.y.toFixed(2)})</div>
+      </div>
+    );
+  }
+
+  // Results
+  if (type === 'results') {
+    const q = QUERIES[idx];
+    if (!q) return null;
+    const sorted = q.topK.map(cid => ({chunk:CHUNKS[cid], score:q.similarities[cid]}));
+    return (
+      <div style={{padding:12,overflowY:'auto',height:'100%',fontFamily:MONO,fontSize:11}}>
+        <div style={{fontSize:11,color:'#9ca3af',marginBottom:8,fontWeight:600,letterSpacing:0.5}}>SIMILARITY RESULTS</div>
+        {sorted.map(({chunk:ch,score}) => (
+          <div key={ch.id} style={{marginBottom:6,padding:'6px 8px',background:'#1e293b',borderRadius:6,borderLeft:`3px solid ${ch.classification==='confidential'?'#ef4444':DOC_COLORS[ch.source]}`}}>
+            <div style={{display:'flex',justifyContent:'space-between'}}>
+              <span style={{color:DOC_COLORS[ch.source]}}>Chunk {ch.id} — {ch.section}</span>
+              <span style={{color:score>0.8?'#10b981':score>0.5?'#f59e0b':'#6b7280',fontWeight:600}}>{score.toFixed(2)}</span>
+            </div>
+            <div style={{marginTop:3,height:4,background:'#0f172a',borderRadius:2}}>
+              <div style={{height:4,borderRadius:2,width:`${score*100}%`,background:score>0.8?'#10b981':score>0.5?'#f59e0b':'#6b7280',transition:'width 0.3s'}}/>
+            </div>
+            {ch.classification==='confidential' && <div style={{fontSize:9,color:'#ef4444',marginTop:2}}>🔒 CONFIDENTIAL</div>}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // Reranked
+  if (type === 'reranked') {
+    const q = QUERIES[idx];
+    if (!q || !q.reranked) return null;
+    return (
+      <div style={{padding:12,overflowY:'auto',height:'100%',fontFamily:MONO,fontSize:11}}>
+        <div style={{fontSize:11,color:'#9ca3af',marginBottom:8,fontWeight:600,letterSpacing:0.5}}>RE-RANKED RESULTS</div>
+        {q.reranked.map(r => {
+          const ch = CHUNKS[r.chunkId];
+          const diff = r.score - r.orig;
+          return (
+            <div key={r.chunkId} style={{marginBottom:6,padding:'6px 8px',background:'#1e293b',borderRadius:6,borderLeft:`3px solid ${COLORS.reranker.border}`}}>
+              <div style={{display:'flex',justifyContent:'space-between'}}>
+                <span style={{color:DOC_COLORS[ch.source]}}>Chunk {ch.id} — {ch.section}</span>
+                <span style={{color:'#f472b6',fontWeight:600}}>{r.score.toFixed(2)}</span>
+              </div>
+              <div style={{fontSize:10,color:diff>0?'#10b981':'#ef4444',marginTop:2}}>
+                was {r.orig.toFixed(2)} → {r.score.toFixed(2)} ({diff>0?'+':''}{diff.toFixed(2)}) {diff>0?'↑':'↓'}
+              </div>
+              <div style={{marginTop:3,height:4,background:'#0f172a',borderRadius:2}}>
+                <div style={{height:4,borderRadius:2,width:`${r.score*100}%`,background:'#ec4899',transition:'width 0.3s'}}/>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // Prompt
+  if (type === 'prompt') {
+    const q = QUERIES[idx];
+    if (!q) return null;
+    return (
+      <div style={{padding:12,overflowY:'auto',height:'100%',fontFamily:MONO,fontSize:10,lineHeight:1.6}}>
+        <div style={{fontSize:11,color:'#9ca3af',marginBottom:8,fontWeight:600,letterSpacing:0.5}}>LLM PROMPT</div>
+        <pre style={{margin:0,whiteSpace:'pre-wrap',wordBreak:'break-word'}}>
+          {q.llmPrompt.split('\n').map((line,i) => {
+            let color = '#cbd5e1';
+            if (line.startsWith('System:')) color = '#9ca3af';
+            else if (line.startsWith('[')) color = '#10b981';
+            else if (line.startsWith('Source:') || line.startsWith('Note:')) color = '#10b981';
+            else if (line.startsWith('User:') || line.startsWith('Context:')) color = '#22d3ee';
+            return <div key={i} style={{color}}>{line}</div>;
+          })}
+        </pre>
+      </div>
+    );
+  }
+
+  // Response
+  if (type === 'response') {
+    const q = QUERIES[idx];
+    if (!q) return null;
+    return (
+      <div style={{padding:12,overflowY:'auto',height:'100%',fontFamily:MONO,fontSize:11}}>
+        <div style={{fontSize:11,color:'#9ca3af',marginBottom:8,fontWeight:600,letterSpacing:0.5}}>LLM RESPONSE</div>
+        <div style={{padding:8,background:'#1e293b',borderRadius:6,color:'#e2e8f0',lineHeight:1.6}}>
+          {q.llmResponse.split(/(\[\d+\])/).map((part,i) => {
+            if (/^\[\d+\]$/.test(part)) return <span key={i} style={{color:'#22d3ee',fontWeight:700,cursor:'pointer'}}>{part}</span>;
+            return <span key={i}>{part}</span>;
+          })}
+        </div>
+        <div style={{marginTop:10,fontSize:11,color:'#9ca3af',fontWeight:600}}>CITATIONS</div>
+        {q.citations.map(c => (
+          <div key={c.id} style={{marginTop:4,padding:'4px 8px',borderLeft:`2px solid #22d3ee`,color:'#22d3ee',fontSize:10}}>
+            [{c.id}] {c.source} — {c.section}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // Filtered
+  if (type === 'filtered') {
+    const q = QUERIES[idx];
+    if (!q || !q.filtered) return null;
+    return (
+      <div style={{padding:12,overflowY:'auto',height:'100%',fontFamily:MONO,fontSize:11}}>
+        <div style={{fontSize:11,color:'#9ca3af',marginBottom:4,fontWeight:600,letterSpacing:0.5}}>ACCESS CONTROL FILTER</div>
+        <div style={{fontSize:10,color:'#f59e0b',marginBottom:8,padding:'4px 8px',background:'rgba(245,158,11,0.1)',borderRadius:4}}>
+          User access level: regular_employee
+        </div>
+        {q.filtered.map(r => {
+          const ch = CHUNKS[r.chunkId];
+          const blocked = r.status === 'blocked';
+          return (
+            <div key={r.chunkId} style={{marginBottom:6,padding:'6px 8px',background:blocked?'rgba(239,68,68,0.08)':'#1e293b',
+              borderRadius:6,borderLeft:`3px solid ${blocked?'#ef4444':'#10b981'}`,opacity:blocked?0.7:1}}>
+              <div style={{display:'flex',justifyContent:'space-between'}}>
+                <span style={{color:blocked?'#ef4444':DOC_COLORS[ch.source]}}>{blocked?'🔒':''} Chunk {ch.id} — {ch.section}</span>
+                <span style={{fontSize:10,padding:'1px 6px',borderRadius:3,
+                  background:blocked?'rgba(239,68,68,0.2)':'rgba(16,185,129,0.2)',
+                  color:blocked?'#ef4444':'#10b981',fontWeight:600}}>
+                  {blocked?'BLOCKED':'PASSED'} ({r.score.toFixed(2)})
+                </span>
+              </div>
+              <div style={{fontSize:9,color:'#6b7280',marginTop:2}}>{ch.source}.md — {ch.classification}</div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  return null;
+}
+
+// ============================================================================
+// 13. DATA INSPECTOR PANEL
+// ============================================================================
+function DataInspectorPanel({chunkLog, inspectorContent, currentStep, currentStepIndex}) {
+  return (
+    <div style={{height:'100%',display:'flex',background:'#0f172a'}}>
+      <div style={{width:'40%',borderRight:'1px solid #1e293b',display:'flex',flexDirection:'column'}}>
+        <div style={{padding:'6px 10px',borderBottom:'1px solid #1e293b',fontSize:10,color:'#9ca3af',fontWeight:600,letterSpacing:0.5}}>CHUNK LOG</div>
+        <div style={{flex:1,overflow:'hidden'}}><ChunkLog chunkLog={chunkLog} currentStepIndex={currentStepIndex}/></div>
+      </div>
+      <div style={{width:'60%',display:'flex',flexDirection:'column'}}>
+        <div style={{padding:'6px 10px',borderBottom:'1px solid #1e293b',fontSize:10,color:'#9ca3af',fontWeight:600,letterSpacing:0.5}}>PAYLOAD INSPECTOR</div>
+        <div style={{flex:1,overflow:'hidden'}}><PayloadInspector inspectorContent={inspectorContent} currentStep={currentStep}/></div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// 14. CHAT PANEL
+// ============================================================================
+function TypingDots() {
+  return (
+    <span style={{display:'inline-flex',gap:3,padding:'4px 0'}}>
+      {[0,1,2].map(i => <span key={i} style={{width:6,height:6,borderRadius:'50%',background:'#64748b',display:'inline-block',animation:`typingBounce 1.4s ease-in-out ${i*0.2}s infinite`}}/>)}
+    </span>
+  );
+}
+
+function ChatMessage({msg}) {
+  const isUser = msg.role === 'user';
+  const isThinking = msg.role === 'thinking';
+  return (
+    <div style={{display:'flex',justifyContent:isUser?'flex-end':'flex-start',marginBottom:12,animation:'fadeIn 0.3s ease-out'}}>
+      <div style={{maxWidth:'85%',padding:'10px 14px',borderRadius:isUser?'14px 14px 4px 14px':'14px 14px 14px 4px',
+        background:isUser?'rgba(59,130,246,0.15)':'rgba(30,41,59,0.8)',
+        border:`1px solid ${isUser?'rgba(59,130,246,0.3)':'#1e293b'}`}}>
+        {isThinking ? (
+          <div style={{display:'flex',alignItems:'center',gap:8,color:'#64748b',fontSize:13}}>
+            <TypingDots/> <span>{msg.content}</span>
+          </div>
+        ) : (
+          <>
+            <div style={{fontSize:13,lineHeight:1.6,color:'#e2e8f0'}}>
+              {msg.content.split(/(\[\d+\])/).map((part,i) => {
+                if (/^\[\d+\]$/.test(part)) return <span key={i} style={{color:'#22d3ee',fontWeight:700,fontSize:11,cursor:'pointer'}}>{part}</span>;
+                return <span key={i}>{part}</span>;
+              })}
+            </div>
+            {msg.citations && msg.citations.length > 0 && (
+              <div style={{marginTop:8,paddingTop:6,borderTop:'1px solid #2a2a3c'}}>
+                {msg.citations.map(c => (
+                  <div key={c.id} style={{fontSize:10,color:'#22d3ee',marginBottom:2,opacity:0.8}}>
+                    [{c.id}] {c.source} — {c.section}
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ChatPanel({chatMessages}) {
+  const scrollRef = useRef(null);
+  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [chatMessages.length]);
+  return (
+    <div style={{height:'100%',display:'flex',flexDirection:'column',background:'#0f172a'}}>
+      <div style={{padding:'12px 16px',borderBottom:'1px solid #1e293b'}}>
+        <div style={{fontSize:14,fontWeight:700,color:'#e2e8f0'}}>RAG Assistant</div>
+        <div style={{fontSize:11,color:'#64748b'}}>Ask questions about company documents</div>
+      </div>
+      <div ref={scrollRef} style={{flex:1,overflowY:'auto',padding:16}}>
+        {chatMessages.length === 0 ? (
+          <div style={{textAlign:'center',color:'#4b5563',marginTop:40,fontSize:13}}>
+            Chat messages will appear as the demo progresses
+          </div>
+        ) : chatMessages.map((msg,i) => <ChatMessage key={i} msg={msg}/>)}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// 15. STEP NARRATOR
+// ============================================================================
+const PHASE_COLORS = {
+  loading:'#10b981', chunking:'#10b981', embedding:'#06b6d4', indexing:'#3b82f6',
+  query_start:'#f59e0b', query_embedding:'#06b6d4', searching:'#3b82f6',
+  reranking:'#ec4899', assembling:'#f59e0b', generating:'#a855f7',
+  responding:'#f59e0b',
+};
+
+function StepNarrator({sim}) {
+  const step = sim.currentStep;
+  const phaseColor = PHASE_COLORS[step.phase] || '#9ca3af';
+  return (
+    <div style={{height:'100%',display:'flex',flexDirection:'column',background:'#0f172a',padding:'8px 16px'}}>
+      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+        <span style={{fontSize:9,padding:'2px 8px',borderRadius:4,background:`${phaseColor}20`,color:phaseColor,fontWeight:700,letterSpacing:0.5,textTransform:'uppercase'}}>
+          {step.phase.replace(/_/g,' ')}
+        </span>
+        <span style={{fontSize:11,color:'#6b7280'}}>
+          Step {sim.actStepIndex+1} of {sim.totalActSteps} • Act {sim.currentAct}
+        </span>
+        <span style={{fontSize:11,color:'#4b5563',marginLeft:'auto'}}>
+          {sim.currentStepIndex+1}/{sim.totalSteps}
+        </span>
+      </div>
+      <div style={{flex:1,fontSize:14,lineHeight:1.7,color:'#cbd5e1',overflowY:'auto'}}>
+        {step.narration}
+      </div>
+      <div style={{display:'flex',alignItems:'center',gap:8,paddingTop:8,borderTop:'1px solid #1e293b',flexWrap:'wrap'}}>
+        <div style={{display:'flex',gap:4}}>
+          {[1,2,3].map(a => (
+            <button key={a} onClick={()=>sim.goToAct(a)} style={{
+              padding:'3px 10px',borderRadius:5,border:`1px solid ${sim.currentAct===a?'#3b82f6':'#2a2a3c'}`,
+              background:sim.currentAct===a?'rgba(59,130,246,0.15)':'transparent',
+              color:sim.currentAct===a?'#60a5fa':'#6b7280',fontSize:11,cursor:'pointer',fontFamily:'inherit',
+            }}>Act {a}</button>
+          ))}
+        </div>
+        <div style={{marginLeft:'auto',display:'flex',gap:4}}>
+          <button onClick={sim.prev} disabled={sim.currentStepIndex===0} style={{
+            padding:'4px 12px',borderRadius:6,border:'1px solid #2a2a3c',background:'transparent',
+            color:sim.currentStepIndex===0?'#2a2a3c':'#9ca3af',fontSize:12,cursor:'pointer',fontFamily:'inherit',
+          }}>◀ Back</button>
+          <button onClick={sim.togglePlay} style={{
+            padding:'4px 14px',borderRadius:6,border:`1px solid ${sim.isPlaying?'#f59e0b':'#3b82f6'}`,
+            background:sim.isPlaying?'rgba(245,158,11,0.15)':'rgba(59,130,246,0.15)',
+            color:sim.isPlaying?'#fbbf24':'#60a5fa',fontSize:12,cursor:'pointer',fontFamily:'inherit',fontWeight:600,
+          }}>{sim.isPlaying ? '⏸ Pause' : '▶ Play'}</button>
+          <button onClick={sim.next} disabled={sim.currentStepIndex>=sim.totalSteps-1} style={{
+            padding:'4px 12px',borderRadius:6,border:'1px solid #2a2a3c',background:'transparent',
+            color:sim.currentStepIndex>=sim.totalSteps-1?'#2a2a3c':'#9ca3af',fontSize:12,cursor:'pointer',fontFamily:'inherit',
+          }}>Next ▶</button>
+        </div>
+        <div style={{display:'flex',gap:4,marginLeft:8}}>
+          {[{label:'1x',ms:3000},{label:'1.5x',ms:2000},{label:'2x',ms:1200}].map(s => (
+            <button key={s.label} onClick={()=>sim.setPlaySpeed(s.ms)} style={{
+              padding:'2px 8px',borderRadius:4,border:`1px solid ${sim.playSpeed===s.ms?'#6b7280':'#1e293b'}`,
+              background:'transparent',color:sim.playSpeed===s.ms?'#e2e8f0':'#4b5563',fontSize:10,cursor:'pointer',fontFamily:'inherit',
+            }}>{s.label}</button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// 16. ACT TRANSITION
+// ============================================================================
+function ActTransition({actMeta, onContinue}) {
+  useEffect(() => { const t = setTimeout(onContinue, 3500); return () => clearTimeout(t); }, [onContinue]);
+  if (!actMeta) return null;
+  const actColors = ['','#10b981','#3b82f6','#ec4899'];
+  const c = actColors[actMeta.number] || '#9ca3af';
+  return (
+    <div onClick={onContinue} style={{
+      position:'fixed',inset:0,background:'rgba(15,23,42,0.92)',display:'flex',alignItems:'center',justifyContent:'center',
+      zIndex:100,cursor:'pointer',animation:'fadeIn 0.4s ease-out',
+    }}>
+      <div style={{textAlign:'center',maxWidth:500}}>
+        <div style={{fontSize:14,color:c,fontWeight:700,letterSpacing:2,marginBottom:8}}>ACT {actMeta.number}</div>
+        <div style={{fontSize:36,fontWeight:800,color:'#f1f5f9',marginBottom:8}}>{actMeta.title}</div>
+        <div style={{fontSize:16,color:'#94a3b8',fontStyle:'italic',marginBottom:20}}>{actMeta.subtitle}</div>
+        <div style={{fontSize:14,color:'#64748b',lineHeight:1.6,marginBottom:20}}>{actMeta.description}</div>
+        <div style={{padding:'8px 16px',background:`${c}15`,border:`1px solid ${c}30`,borderRadius:8,display:'inline-block'}}>
+          <span style={{fontSize:12,color:c,fontWeight:600}}>Watch for: </span>
+          <span style={{fontSize:12,color:'#94a3b8'}}>{actMeta.watchFor}</span>
+        </div>
+        <div style={{marginTop:20,fontSize:11,color:'#4b5563'}}>Click or wait to continue</div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// 17. LANDING SCREEN
+// ============================================================================
+function LandingScreen({onStart, onSkipToAct}) {
+  return (
+    <div style={{position:'fixed',inset:0,display:'flex',alignItems:'center',justifyContent:'center',background:'#0f172a'}}>
+      <div style={{position:'absolute',inset:0,overflow:'hidden',opacity:0.04,pointerEvents:'none'}}>
+        <svg width="100%" height="100%">
+          {Array.from({length:40},(_,i)=>Array.from({length:25},(_,j)=>(
+            <circle key={`${i}-${j}`} cx={i*48+24} cy={j*48+24} r="1.5" fill="#fff"/>
+          )))}
+        </svg>
+      </div>
+      <div style={{maxWidth:580,width:'90%',textAlign:'center',position:'relative',animation:'fadeIn 0.6s ease-out'}}>
+        <div style={{position:'absolute',width:400,height:400,borderRadius:'50%',
+          background:'radial-gradient(circle,rgba(16,185,129,0.12) 0%,transparent 70%)',
+          top:-120,left:'50%',transform:'translateX(-50%)',pointerEvents:'none'}}/>
+        <div style={{width:72,height:72,borderRadius:18,background:'rgba(16,185,129,0.08)',border:'1px solid rgba(16,185,129,0.2)',
+          display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 28px'}}>
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="1.5">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+            <path d="M11 8v6M8 11h6"/>
+          </svg>
+        </div>
+        <h1 style={{fontSize:44,fontWeight:800,color:'#f1f5f9',margin:'0 0 8px',letterSpacing:'-0.03em',lineHeight:1.1}}>
+          RAG Glass Box Demo
+        </h1>
+        <p style={{fontSize:18,color:'#94a3b8',margin:'0 0 16px',fontStyle:'italic'}}>
+          See every step of Retrieval-Augmented Generation
+        </p>
+        <p style={{fontSize:15,color:'#64748b',lineHeight:1.65,margin:'0 auto 40px',maxWidth:480}}>
+          Watch documents get chunked, embedded, and indexed. See queries find answers through
+          vector similarity. Observe re-ranking and citations — all in real time.
+        </p>
+        <button onClick={()=>onStart()} style={{
+          padding:'16px 56px',borderRadius:14,border:'1px solid rgba(16,185,129,0.4)',
+          background:'linear-gradient(135deg,rgba(16,185,129,0.2),rgba(16,185,129,0.08))',
+          color:'#34d399',fontSize:20,fontWeight:700,cursor:'pointer',transition:'all 0.25s ease',
+          boxShadow:'0 0 40px rgba(16,185,129,0.12)',fontFamily:'inherit',letterSpacing:'0.02em',
+        }} onMouseEnter={e=>{e.currentTarget.style.background='linear-gradient(135deg,rgba(16,185,129,0.3),rgba(16,185,129,0.15))';e.currentTarget.style.boxShadow='0 0 60px rgba(16,185,129,0.2)';}}
+          onMouseLeave={e=>{e.currentTarget.style.background='linear-gradient(135deg,rgba(16,185,129,0.2),rgba(16,185,129,0.08))';e.currentTarget.style.boxShadow='0 0 40px rgba(16,185,129,0.12)';}}>
+          Start Demo
+        </button>
+        <div style={{marginTop:28,display:'flex',gap:12,justifyContent:'center',flexWrap:'wrap'}}>
+          <span style={{color:'#4b5563',fontSize:13,alignSelf:'center'}}>Skip to:</span>
+          {[{act:1,label:'Ingestion'},{act:2,label:'Simple Query'},{act:3,label:'Re-ranking'}].map(item => (
+            <button key={item.act} onClick={()=>onSkipToAct(item.act)} style={{
+              padding:'5px 14px',borderRadius:8,border:'1px solid #1e293b',background:'transparent',
+              color:'#6b7280',fontSize:13,cursor:'pointer',fontFamily:'inherit',transition:'all 0.15s',
+            }} onMouseEnter={e=>{e.currentTarget.style.color='#e2e8f0';e.currentTarget.style.borderColor='#334155';}}
+              onMouseLeave={e=>{e.currentTarget.style.color='#6b7280';e.currentTarget.style.borderColor='#1e293b';}}>
+              Act {item.act}: {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// 18. HEADER BAR
+// ============================================================================
+function HeaderBar({currentAct, currentStepIndex, totalSteps, onActClick}) {
+  return (
+    <div style={{height:42,display:'flex',alignItems:'center',padding:'0 16px',borderBottom:'1px solid #1e293b',background:'rgba(15,23,42,0.8)',flexShrink:0}}>
+      <div style={{fontSize:14,fontWeight:700,color:'#e2e8f0',marginRight:20}}>RAG Glass Box</div>
+      <div style={{display:'flex',gap:2}}>
+        {[1,2,3].map(a => (
+          <button key={a} onClick={()=>onActClick(a)} style={{
+            padding:'4px 12px',borderRadius:5,border:'none',
+            background:currentAct===a?'rgba(59,130,246,0.2)':'transparent',
+            color:currentAct===a?'#60a5fa':'#64748b',fontSize:12,cursor:'pointer',fontFamily:'inherit',fontWeight:currentAct===a?600:400,
+          }}>Act {a}</button>
+        ))}
+      </div>
+      <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:12}}>
+        <div style={{width:120,height:3,background:'#1e293b',borderRadius:2}}>
+          <div style={{height:3,borderRadius:2,background:'#3b82f6',width:`${((currentStepIndex+1)/totalSteps)*100}%`,transition:'width 0.3s'}}/>
+        </div>
+        <span style={{fontSize:11,color:'#64748b'}}>{currentStepIndex+1}/{totalSteps}</span>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// 19. APP
+// ============================================================================
+const SimulationContext = createContext(null);
+
+function App() {
+  const sim = useSimulation();
+  const [showLanding, setShowLanding] = useState(true);
+  const [actTransition, setActTransition] = useState(null);
+  const prevActRef = useRef(sim.currentAct);
+  const simRef = useRef(sim);
+  simRef.current = sim;
+
+  useEffect(() => {
+    if (!showLanding && sim.currentAct !== prevActRef.current) {
+      setActTransition(ACT_METADATA[sim.currentAct]);
+      prevActRef.current = sim.currentAct;
+    }
+  }, [sim.currentAct, showLanding]);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (showLanding) return;
+      const s = simRef.current;
+      if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); s.next(); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); s.prev(); }
+      else if (e.key === 'p' || e.key === 'P') { s.togglePlay(); }
+      else if (e.key === 'Escape') { setShowLanding(true); s.reset(); }
+      else if (e.key >= '1' && e.key <= '3') { s.goToAct(parseInt(e.key)); }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [showLanding]);
+
+  if (showLanding) return <LandingScreen onStart={()=>{setShowLanding(false);sim.goToStep(0);prevActRef.current=1;}} onSkipToAct={(a)=>{setShowLanding(false);sim.goToAct(a);prevActRef.current=a;}}/>;
+
+  return (
+    <SimulationContext.Provider value={sim}>
+      <div style={{height:'100vh',display:'flex',flexDirection:'column',background:'#0f172a'}}>
+        <HeaderBar currentAct={sim.currentAct} currentStepIndex={sim.currentStepIndex} totalSteps={sim.totalSteps} onActClick={a=>sim.goToAct(a)}/>
+        <div style={{flex:1,display:'flex',minHeight:0}}>
+          <div style={{width:'38%',borderRight:'1px solid #1e293b',overflow:'hidden'}}>
+            <ChatPanel chatMessages={sim.chatMessages}/>
+          </div>
+          <div style={{width:'62%',display:'flex',flexDirection:'column',minHeight:0}}>
+            <div style={{flex:'5 1 0%',minHeight:120,borderBottom:'1px solid #1e293b',overflow:'hidden'}}>
+              <DiagramPanel activeComponents={sim.activeComponents} dataFlow={sim.currentStep.dataFlow} vectorSpace={sim.vectorSpace}/>
+            </div>
+            <div style={{flex:'3 1 0%',minHeight:100,borderBottom:'1px solid #1e293b',overflow:'hidden'}}>
+              <DataInspectorPanel chunkLog={sim.chunkLog} inspectorContent={sim.currentStep.inspectorContent} currentStep={sim.currentStep} currentStepIndex={sim.currentStepIndex}/>
+            </div>
+            <div style={{flex:'3 1 0%',minHeight:160,overflow:'hidden'}}>
+              <StepNarrator sim={sim}/>
+            </div>
+          </div>
+        </div>
+        {actTransition && <ActTransition actMeta={actTransition} onContinue={()=>setActTransition(null)}/>}
+      </div>
+    </SimulationContext.Provider>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
