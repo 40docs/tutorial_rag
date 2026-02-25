@@ -8,13 +8,6 @@ Open `index.html` in any modern browser. That's it — no install, no build step
 
 > The file loads React, Babel, and Tailwind from CDN, so you need an internet connection on first load.
 
-For local development with live reload, serve the directory:
-
-```bash
-python3 -m http.server 5000
-# Open http://localhost:5000
-```
-
 ## What You'll See
 
 The demo walks through **4 acts**:
@@ -60,10 +53,10 @@ All embeddings, similarity scores, and LLM responses are pre-computed — no API
 ## Project Structure
 
 ```
-index.html                      # Self-contained demo (open directly in browser)
-RAG-Architecture-Deep-Dive.md   # Educational guide to RAG concepts
-RAG-Demo-Build-Spec-agents.md   # Build spec and maintenance reference
-README.md                       # This file
+index.html                                  # Self-contained demo (open directly in browser)
+prompts/RAG-Architecture-Deep-Dive.md       # Educational guide to RAG concepts
+prompts/RAG-Demo-Build-Spec-agents.md       # Build spec and maintenance reference
+README.md                                   # This file
 ```
 
 ## Tech Stack
