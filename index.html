@@ -119,9 +119,9 @@ const QUERIES = [
   {
     id:1, text:"What's the meal reimbursement limit for business travel?",
     position3D:{x:0.64,y:0.32,z:0.57}, embedding:[-0.010,0.032,0.043,-0.007,0.017,-0.020,0.038,0.004],
-    similarities:{0:0.18,1:0.15,2:0.55,3:0.12,4:0.85,5:0.88,6:0.68,7:0.72,8:0.48,9:0.10,10:0.08,11:0.06},
-    topK:[5,4,7,6,2],
-    reranked:[{chunkId:5,score:0.95,orig:0.88},{chunkId:4,score:0.91,orig:0.85},{chunkId:8,score:0.78,orig:0.48},{chunkId:7,score:0.52,orig:0.72},{chunkId:6,score:0.48,orig:0.68}],
+    similarities:{0:0.18,1:0.15,2:0.32,3:0.12,4:0.85,5:0.88,6:0.68,7:0.72,8:0.55,9:0.10,10:0.08,11:0.06},
+    topK:[5,4,7,6,8],
+    reranked:[{chunkId:5,score:0.95,orig:0.88},{chunkId:4,score:0.91,orig:0.85},{chunkId:8,score:0.78,orig:0.55},{chunkId:7,score:0.52,orig:0.72},{chunkId:6,score:0.48,orig:0.68}],
     filtered:null,
     llmPrompt:'System: You are a helpful corporate assistant. Answer questions based ONLY on the provided context. Include citation numbers [1], [2], etc.\n\nContext:\n[1] Source: expense-policy.md — chunk 2/5 [462:974]\nLunch $30, Dinner $50. Client entertainment: up to $150/person with pre-approval. Alcohol reimbursable only during client entertainment, capped at $50/person. Tips included in meal limits. Office & Professional Dev...\n\n[2] Source: expense-policy.md — chunk 1/5 [0:512]\nTravel & Lodging — Airfare: Economy class for flights under 6 hours; business class over 6 hours with VP approval. Hotels: Up to $250/night standard markets, $350 premium markets...Meals & Entertainment — Meal reimbursement limits per person: Breakfast $20, Lunch $30, Dinner\n\n[3] Source: expense-policy.md — chunk 5/5 [1848:2160]\nCapital expenditures over $10K require board notification. All recurring expenses over $1,000/month need annual review. Emergency expenses may be submitted retroactively with justification memo.\n\nUser: What\'s the meal reimbursement limit for business travel?',
     llmResponse:'For business travel, meal reimbursement limits are: Breakfast up to $20, Lunch up to $30, and Dinner up to $50 per person [1][2]. Client entertainment meals can be up to $150 per person but require pre-approval. Alcohol is reimbursable only during client entertainment, capped at $50 per person [1]. All meal expenses over $25 require itemized receipts [3].',
@@ -279,10 +279,10 @@ const STEPS = [
     activeComponents:[C.QUERY_ENGINE,C.VECTOR_DB], dataFlow:{from:C.EMBEDDER,to:C.QUERY_ENGINE,label:'query vector'},
     narration:"Cosine similarity computed against all 12 chunks. The top 5 are mostly expense-policy.md, but the ordering isn't perfect.",
     stateMutations:{},
-    chatUpdate:null, chunkLogUpdate:[{type:'retrieved',chunkId:5,score:0.88},{type:'retrieved',chunkId:4,score:0.85},{type:'retrieved',chunkId:7,score:0.72},{type:'retrieved',chunkId:6,score:0.68},{type:'retrieved',chunkId:2,score:0.55}], inspectorContent:null, vectorSpaceUpdate:{showQuery:1,highlightNearest:{queryId:1,topK:5}} },
+    chatUpdate:null, chunkLogUpdate:[{type:'retrieved',chunkId:5,score:0.88},{type:'retrieved',chunkId:4,score:0.85},{type:'retrieved',chunkId:7,score:0.72},{type:'retrieved',chunkId:6,score:0.68},{type:'retrieved',chunkId:8,score:0.55}], inspectorContent:null, vectorSpaceUpdate:{showQuery:1,highlightNearest:{queryId:1,topK:5}} },
   { id:'a3s4', act:3, phase:'searching', label:'Initial Ranking (Imperfect)',
     activeComponents:[C.QUERY_ENGINE], dataFlow:null,
-    narration:"Initial results: Chunk 5 with meal limits (0.88), Chunk 4 with travel+meals (0.85), Chunk 7 with approvals (0.72), Chunk 6 with office perks (0.68), PTO chunk (0.55). Problem: Chunk 7 outranks the more relevant 'Approval Thresholds' in Chunk 8 — embedding similarity isn't always perfect ordering.",
+    narration:"Initial results — all from expense-policy.md: Chunk 5 with meal limits (0.88), Chunk 4 with travel+meals (0.85), Chunk 7 with international/approvals (0.72), Chunk 6 with office perks (0.68), and Chunk 8 with submission rules (0.55). The right document cluster, but the ordering isn't ideal — Chunk 6 with office perks outranks Chunk 8 which has approval thresholds and receipt requirements directly relevant to the question.",
     stateMutations:{},
     chatUpdate:null, chunkLogUpdate:null, inspectorContent:'results:1', vectorSpaceUpdate:null },
   { id:'a3s5', act:3, phase:'reranking', label:'Enter Re-ranking Phase',
@@ -292,7 +292,7 @@ const STEPS = [
     chatUpdate:null, chunkLogUpdate:null, inspectorContent:null, vectorSpaceUpdate:null },
   { id:'a3s6', act:3, phase:'reranking', label:'Re-ranker Scores Each Pair',
     activeComponents:[C.RERANKER], dataFlow:null,
-    narration:"The cross-encoder evaluates all 5 candidates against the query. Meals jumps from 0.88 to 0.95. Approval Thresholds wasn't even in the initial top 3 but now scores 0.78 — the re-ranker recognized its relevance.",
+    narration:"The cross-encoder evaluates all 5 candidates against the query. Meals jumps from 0.88 to 0.95. Chunk 8 leaps from 5th (0.55) to 3rd (0.78) — the re-ranker recognized its receipt and approval details are directly relevant to reimbursement. Meanwhile, office perks and international travel get demoted.",
     stateMutations:{},
     chatUpdate:null, chunkLogUpdate:[{type:'reranked',chunkId:5,score:0.95,origScore:0.88},{type:'reranked',chunkId:4,score:0.91,origScore:0.85},{type:'reranked',chunkId:8,score:0.78,origScore:0.48},{type:'reranked',chunkId:7,score:0.52,origScore:0.72},{type:'reranked',chunkId:6,score:0.48,origScore:0.68}], inspectorContent:'reranked:1', vectorSpaceUpdate:null },
   { id:'a3s7', act:3, phase:'reranking', label:'Re-ranked Results',
@@ -439,12 +439,14 @@ function useSimulation() {
     return () => { if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; } };
   }, [isPlaying, playSpeed, computeStateAtStep, computeChatAtStep, computeChunkLogAtStep, computeVectorSpaceAtStep]);
 
+  const embeddedChunks = useMemo(() => new Set(vectorSpace.visibleChunks), [vectorSpace.visibleChunks]);
+
   return {
     state:componentStates, currentStep, currentStepIndex, currentAct,
     actStepIndex, totalActSteps, steps:STEPS, totalSteps:STEPS.length,
     next, prev, play, pause, togglePlay, goToAct, goToStep, reset,
     isPlaying, playSpeed, setPlaySpeed,
-    chatMessages, chunkLog, vectorSpace, activeComponents, dataFlow,
+    chatMessages, chunkLog, vectorSpace, activeComponents, dataFlow, embeddedChunks,
     actMetadata:ACT_METADATA, actOffsets:ACT_OFFSETS, actLengths:ACT_LENGTHS,
   };
 }
@@ -792,7 +794,7 @@ function ChunkLog({chunkLog, currentStepIndex}) {
 // ============================================================================
 // 12. PAYLOAD INSPECTOR
 // ============================================================================
-function PayloadInspector({inspectorContent, currentStep}) {
+function PayloadInspector({inspectorContent, currentStep, embeddedChunks}) {
   if (!inspectorContent) return (
     <div style={{height:'100%',display:'flex',alignItems:'center',justifyContent:'center',color:'#4b5563',fontSize:12,fontFamily:MONO}}>
       Step forward to inspect pipeline data
@@ -822,14 +824,21 @@ function PayloadInspector({inspectorContent, currentStep}) {
   if (type === 'chunk') {
     const ch = CHUNKS[idx];
     if (!ch) return null;
+    const isEmbedded = embeddedChunks && embeddedChunks.has(ch.id);
     return (
       <div style={{padding:12,overflowY:'auto',height:'100%',fontFamily:MONO,fontSize:11}}>
         <div style={{fontSize:11,color:'#9ca3af',marginBottom:8,fontWeight:600,letterSpacing:0.5}}>CHUNK {ch.id}</div>
         <div style={{marginBottom:6}}><span style={{color:'#6b7280'}}>Source: </span><span style={{color:DOC_COLORS[ch.source]}}>{ch.source}.md — {ch.section}</span></div>
         <div style={{padding:8,background:'#1e293b',borderRadius:6,marginBottom:8,fontSize:11,lineHeight:1.5,color:'#cbd5e1'}}>{ch.text}</div>
-        <div style={{color:'#6b7280',marginBottom:4}}>Embedding (first 8 dims):</div>
-        <div style={{padding:6,background:'#1e293b',borderRadius:4,color:'#22d3ee',fontSize:10}}>[{ch.embedding.map(v=>v.toFixed(4)).join(', ')}, ...]</div>
-        <div style={{marginTop:6,color:'#6b7280'}}>3D Position: ({ch.position3D.x.toFixed(2)}, {ch.position3D.y.toFixed(2)}, {ch.position3D.z.toFixed(2)})</div>
+        {isEmbedded ? (
+          <>
+            <div style={{color:'#6b7280',marginBottom:4}}>Embedding (first 8 dims):</div>
+            <div style={{padding:6,background:'#1e293b',borderRadius:4,color:'#22d3ee',fontSize:10}}>[{ch.embedding.map(v=>v.toFixed(4)).join(', ')}, ...]</div>
+            <div style={{marginTop:6,color:'#6b7280'}}>3D Position: ({ch.position3D.x.toFixed(2)}, {ch.position3D.y.toFixed(2)}, {ch.position3D.z.toFixed(2)})</div>
+          </>
+        ) : (
+          <div style={{padding:6,background:'rgba(245,158,11,0.08)',borderRadius:4,color:'#f59e0b',fontSize:10,fontStyle:'italic'}}>Embedding not yet computed — awaiting embedding step</div>
+        )}
       </div>
     );
   }
@@ -983,7 +992,7 @@ function PayloadInspector({inspectorContent, currentStep}) {
 // ============================================================================
 // 13. DATA INSPECTOR PANEL
 // ============================================================================
-function DataInspectorPanel({chunkLog, inspectorContent, currentStep, currentStepIndex}) {
+function DataInspectorPanel({chunkLog, inspectorContent, currentStep, currentStepIndex, embeddedChunks}) {
   return (
     <div style={{height:'100%',display:'flex',background:'#0f172a'}}>
       <div style={{width:'40%',borderRight:'1px solid #1e293b',display:'flex',flexDirection:'column'}}>
@@ -992,7 +1001,7 @@ function DataInspectorPanel({chunkLog, inspectorContent, currentStep, currentSte
       </div>
       <div style={{width:'60%',display:'flex',flexDirection:'column'}}>
         <div style={{padding:'6px 10px',borderBottom:'1px solid #1e293b',fontSize:10,color:'#9ca3af',fontWeight:600,letterSpacing:0.5}}>PAYLOAD INSPECTOR</div>
-        <div style={{flex:1,overflow:'hidden'}}><PayloadInspector inspectorContent={inspectorContent} currentStep={currentStep}/></div>
+        <div style={{flex:1,overflow:'hidden'}}><PayloadInspector inspectorContent={inspectorContent} currentStep={currentStep} embeddedChunks={embeddedChunks}/></div>
       </div>
     </div>
   );
@@ -1296,7 +1305,7 @@ function App() {
               <DiagramPanel activeComponents={sim.activeComponents} dataFlow={sim.currentStep.dataFlow} vectorSpace={sim.vectorSpace}/>
             </div>
             <div style={{flex:'3 1 0%',minHeight:100,borderBottom:'1px solid #1e293b',overflow:'hidden'}}>
-              <DataInspectorPanel chunkLog={sim.chunkLog} inspectorContent={sim.currentStep.inspectorContent} currentStep={sim.currentStep} currentStepIndex={sim.currentStepIndex}/>
+              <DataInspectorPanel chunkLog={sim.chunkLog} inspectorContent={sim.currentStep.inspectorContent} currentStep={sim.currentStep} currentStepIndex={sim.currentStepIndex} embeddedChunks={sim.embeddedChunks}/>
             </div>
             <div style={{flex:'3 1 0%',minHeight:160,overflow:'hidden'}}>
               <StepNarrator sim={sim}/>
