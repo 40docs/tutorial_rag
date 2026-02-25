@@ -66,6 +66,10 @@ README.md                                   # This file
 - **Tailwind CSS** — utility styles (CDN)
 - **Zero dependencies** — no npm, no node_modules, no bundler
 
+## Disclaimer
+
+This is an **educational demo** designed to illustrate how RAG works at a conceptual level. The embedding vectors, similarity scores, chunk boundaries, and LLM responses shown are simplified representations meant to teach the flow and architecture — not to serve as exact implementation references. Do not treat the specific values as authoritative benchmarks for real RAG systems.
+
 ## License
 
 MIT
